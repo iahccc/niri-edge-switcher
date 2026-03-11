@@ -21,6 +21,7 @@
             pycairo
           ]);
           typelibPath = lib.concatStringsSep ":" [
+            "${pkgs.gobject-introspection}/lib/girepository-1.0"
             "${pkgs.glib.out}/lib/girepository-1.0"
             "${pkgs.glib.dev}/lib/girepository-1.0"
             "${pkgs.gdk-pixbuf.out}/lib/girepository-1.0"
@@ -41,6 +42,7 @@
             pkgs.cairo
             pkgs.gdk-pixbuf
             pkgs.glib
+            pkgs.gobject-introspection
             pkgs.graphene
             pkgs.gtk4
             pkgs.gtk4-layer-shell
@@ -115,6 +117,7 @@
             pycairo
           ]);
           typelibPath = lib.concatStringsSep ":" [
+            "${pkgs.gobject-introspection}/lib/girepository-1.0"
             "${pkgs.glib.out}/lib/girepository-1.0"
             "${pkgs.glib.dev}/lib/girepository-1.0"
             "${pkgs.gdk-pixbuf.out}/lib/girepository-1.0"
@@ -135,6 +138,7 @@
             pkgs.cairo
             pkgs.gdk-pixbuf
             pkgs.glib
+            pkgs.gobject-introspection
             pkgs.graphene
             pkgs.gtk4
             pkgs.gtk4-layer-shell
