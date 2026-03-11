@@ -20,6 +20,14 @@
 
 ## 运行
 
+直接运行已打包的 flake app：
+
+```bash
+nix run github:iahccc/niri-edge-switcher
+```
+
+本地开发：
+
 ```bash
 nix develop
 python main.py
