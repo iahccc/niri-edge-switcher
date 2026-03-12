@@ -8,6 +8,10 @@ from .model import OutputState, Snapshot, WindowState, WorkspaceState
 Side = Literal["left", "right"]
 
 
+def _layout_axis_key(value: float) -> float:
+    return round(value, 6)
+
+
 def find_edge_window(snapshot: Snapshot, output_name: str, side: Side) -> WindowState | None:
     return find_edge_window_with_spacing(snapshot, output_name, side, inter_column_spacing=0.0)
 
@@ -127,10 +131,10 @@ def _pick_by_scrolling_layout(
     if focused_pos is None:
         return None
 
-    focused_column = int(focused_pos[0])
-    columns: dict[int, list[WindowState]] = defaultdict(list)
+    focused_column = _layout_axis_key(float(focused_pos[0]))
+    columns: dict[float, list[WindowState]] = defaultdict(list)
     for window in windows:
-        column = int(window.layout.pos_in_scrolling_layout[0])
+        column = _layout_axis_key(float(window.layout.pos_in_scrolling_layout[0]))
         columns[column].append(window)
 
     ordered_columns = sorted(columns)
@@ -177,10 +181,14 @@ def _pick_by_scrolling_layout(
             return None
         target_column = min(target_columns, key=lambda column: column_left_edges[column])
 
+    target_windows = [window for window in columns[target_column] if window.id != focused.id]
+    if not target_windows:
+        return None
+
     return max(
-        columns[target_column],
+        target_windows,
         key=lambda window: (
             window.focus_timestamp_ns,
-            -int(window.layout.pos_in_scrolling_layout[1]),
+            -float(window.layout.pos_in_scrolling_layout[1]),
         ),
     )

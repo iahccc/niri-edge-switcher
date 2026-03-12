@@ -6,7 +6,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class LayoutState:
-    pos_in_scrolling_layout: tuple[int, int] | None
+    pos_in_scrolling_layout: tuple[float, float] | None
     tile_size: tuple[float, float]
     window_size: tuple[int, int]
     tile_pos_in_workspace_view: tuple[float, float] | None

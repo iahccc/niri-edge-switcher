@@ -9,8 +9,8 @@ from niri_edge_switcher.model import LayoutState, LogicalOutputState, OutputStat
 def make_window(
     window_id: int,
     workspace_id: int,
-    column: int,
-    row: int,
+    column: float,
+    row: float,
     *,
     focused: bool = False,
     tile_x: float | None = None,
@@ -119,3 +119,14 @@ class LogicTests(unittest.TestCase):
         target = find_edge_window(snapshot, "eDP-1", "left")
 
         self.assertIsNone(target)
+
+    def test_keeps_distinct_float_columns_separate_in_fallback(self) -> None:
+        left = make_window(2, 1, 1.2, 1, tile_width=400.0, timestamp=20)
+        focused = make_window(1, 1, 1.8, 1, focused=True, tile_width=400.0, timestamp=100)
+        right = make_window(3, 1, 2.4, 1, tile_width=400.0, timestamp=10)
+        snapshot = make_snapshot(left, focused, right, active_window_id=1)
+
+        target = find_edge_window(snapshot, "eDP-1", "left")
+
+        self.assertIsNotNone(target)
+        self.assertEqual(target.id, 2)
