@@ -43,6 +43,7 @@ class AppConfig:
     hide_delay_ms: int = 140
     post_click_delay_ms: int = 280
     icon_size: int = 72
+    title_max_width: int = 220
     preview_margin: int = 10
     card_padding: int = 18
     inter_column_spacing: float | None = None
@@ -111,10 +112,11 @@ class EdgePreviewWindow:
         on_click: Callable[[], None],
     ) -> None:
         self.config = config
-        self.window = Gtk.ApplicationWindow(application=app)
+        self.window = Gtk.Window()
         self.window.set_decorated(False)
         self.window.set_resizable(False)
         self.window.set_hide_on_close(True)
+        self.window.set_focusable(False)
         self.window.add_css_class("edge-preview-window")
 
         Gtk4LayerShell.init_for_window(self.window)
@@ -137,6 +139,7 @@ class EdgePreviewWindow:
         self.card.set_margin_end(config.card_padding)
         self.card.set_halign(Gtk.Align.CENTER)
         self.card.set_valign(Gtk.Align.CENTER)
+        self.card.set_size_request(config.title_max_width, -1)
 
         self.icon = Gtk.Image.new_from_icon_name("application-x-executable")
         self.icon.add_css_class("edge-preview-icon")
@@ -148,10 +151,12 @@ class EdgePreviewWindow:
         self.title.set_halign(Gtk.Align.CENTER)
         self.title.set_wrap(False)
         self.title.set_single_line_mode(True)
-        self.title.set_max_width_chars(28)
+        self.title.set_width_chars(1)
+        self.title.set_max_width_chars(1)
         self.title.set_ellipsize(Pango.EllipsizeMode.END)
         self.title.set_xalign(0.5)
         self.title.set_margin_top(8)
+        self.title.set_size_request(config.title_max_width - (config.card_padding * 2), -1)
         self.card.append(self.title)
         self.window.set_child(self.card)
 
@@ -208,11 +213,14 @@ class EdgeStripWindow:
         on_click: Callable[[], None],
     ) -> None:
         self.config = config
-        self.window = Gtk.ApplicationWindow(application=app)
+        self.output = output
+        self.pointer_y_offset = 0.0
+        self.window = Gtk.Window()
         self.window.set_decorated(False)
         self.window.set_resizable(False)
-        self.window.set_default_size(config.edge_width, max(1, output.logical.height))
+        self.window.set_default_size(config.edge_width, self._strip_height(output))
         self.window.set_hide_on_close(True)
+        self.window.set_focusable(False)
         self.window.add_css_class("edge-strip-window")
 
         Gtk4LayerShell.init_for_window(self.window)
@@ -222,7 +230,7 @@ class EdgeStripWindow:
         Gtk4LayerShell.set_keyboard_mode(self.window, Gtk4LayerShell.KeyboardMode.NONE)
         Gtk4LayerShell.set_exclusive_zone(self.window, -1)
         Gtk4LayerShell.set_anchor(self.window, Gtk4LayerShell.Edge.TOP, True)
-        Gtk4LayerShell.set_anchor(self.window, Gtk4LayerShell.Edge.BOTTOM, True)
+        Gtk4LayerShell.set_anchor(self.window, Gtk4LayerShell.Edge.BOTTOM, False)
         Gtk4LayerShell.set_anchor(self.window, Gtk4LayerShell.Edge.LEFT, side == "left")
         Gtk4LayerShell.set_anchor(self.window, Gtk4LayerShell.Edge.RIGHT, side == "right")
 
@@ -236,9 +244,9 @@ class EdgeStripWindow:
         self.update_output(output)
 
         motion = Gtk.EventControllerMotion()
-        motion.connect("enter", lambda _controller, _x, y: on_enter(float(y)))
+        motion.connect("enter", lambda _controller, _x, y: on_enter(float(y) + self.pointer_y_offset))
         motion.connect("leave", lambda *_args: on_leave())
-        motion.connect("motion", lambda _controller, _x, y: on_motion(float(y)))
+        motion.connect("motion", lambda _controller, _x, y: on_motion(float(y) + self.pointer_y_offset))
         self.box.add_controller(motion)
 
         gesture = Gtk.GestureClick()
@@ -248,11 +256,21 @@ class EdgeStripWindow:
         self.window.set_visible(False)
 
     def update_output(self, output: OutputState) -> None:
-        height = max(1, int(output.logical.height))
+        self.output = output
+        height = self._strip_height(output)
+        self.pointer_y_offset = self._strip_top_margin(output)
         self.window.set_default_size(self.config.edge_width, height)
         self.window.set_size_request(self.config.edge_width, height)
         self.box.set_size_request(self.config.edge_width, height)
+        Gtk4LayerShell.set_margin(self.window, Gtk4LayerShell.Edge.TOP, int(self.pointer_y_offset))
         self.window.queue_resize()
+
+    def _strip_height(self, output: OutputState) -> int:
+        return max(1, int(output.logical.height / 2))
+
+    def _strip_top_margin(self, output: OutputState) -> float:
+        strip_height = self._strip_height(output)
+        return max(0.0, (output.logical.height - strip_height) / 2.0)
 
     def show(self) -> None:
         self.window.set_visible(True)
@@ -667,6 +685,7 @@ def parse_args(argv: list[str]) -> AppConfig:
     parser.add_argument("--hide-delay-ms", type=int, default=140)
     parser.add_argument("--post-click-delay-ms", type=int, default=280)
     parser.add_argument("--icon-size", type=int, default=72)
+    parser.add_argument("--title-max-width", type=int, default=220)
     parser.add_argument("--preview-margin", type=int, default=10)
     parser.add_argument(
         "--inter-column-spacing",
@@ -682,6 +701,7 @@ def parse_args(argv: list[str]) -> AppConfig:
         hide_delay_ms=args.hide_delay_ms,
         post_click_delay_ms=args.post_click_delay_ms,
         icon_size=args.icon_size,
+        title_max_width=args.title_max_width,
         preview_margin=args.preview_margin,
         inter_column_spacing=args.inter_column_spacing,
         log_level=args.log_level.upper(),
