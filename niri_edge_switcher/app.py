@@ -42,7 +42,7 @@ class AppConfig:
     preview_delay_ms: int = 120
     hide_delay_ms: int = 140
     post_click_delay_ms: int = 280
-    icon_size: int = 72
+    icon_size: int = 64
     title_max_width: int = 220
     preview_margin: int = 10
     card_padding: int = 18
@@ -118,6 +118,8 @@ class EdgePreviewWindow:
         self.window.set_hide_on_close(True)
         self.window.set_focusable(False)
         self.window.add_css_class("edge-preview-window")
+        self.side_padding = max(6, config.card_padding // 2)
+        self.title_max_chars = max(1, config.title_max_width // 10)
 
         Gtk4LayerShell.init_for_window(self.window)
         Gtk4LayerShell.set_namespace(self.window, f"niri-edge-preview-{side}")
@@ -135,15 +137,15 @@ class EdgePreviewWindow:
         self.card.add_css_class("edge-preview-card")
         self.card.set_margin_top(config.card_padding)
         self.card.set_margin_bottom(config.card_padding)
-        self.card.set_margin_start(config.card_padding)
-        self.card.set_margin_end(config.card_padding)
+        self.card.set_margin_start(self.side_padding)
+        self.card.set_margin_end(self.side_padding)
         self.card.set_halign(Gtk.Align.CENTER)
         self.card.set_valign(Gtk.Align.CENTER)
-        self.card.set_size_request(config.title_max_width, -1)
 
         self.icon = Gtk.Image.new_from_icon_name("application-x-executable")
         self.icon.add_css_class("edge-preview-icon")
         self.icon.set_pixel_size(config.icon_size)
+        self.icon.set_halign(Gtk.Align.CENTER)
         self.card.append(self.icon)
 
         self.title = Gtk.Label(label="")
@@ -151,12 +153,10 @@ class EdgePreviewWindow:
         self.title.set_halign(Gtk.Align.CENTER)
         self.title.set_wrap(False)
         self.title.set_single_line_mode(True)
-        self.title.set_width_chars(1)
-        self.title.set_max_width_chars(1)
+        self.title.set_max_width_chars(self.title_max_chars)
         self.title.set_ellipsize(Pango.EllipsizeMode.END)
         self.title.set_xalign(0.5)
         self.title.set_margin_top(8)
-        self.title.set_size_request(config.title_max_width - (config.card_padding * 2), -1)
         self.card.append(self.title)
         self.window.set_child(self.card)
 
@@ -684,7 +684,7 @@ def parse_args(argv: list[str]) -> AppConfig:
     parser.add_argument("--preview-delay-ms", type=int, default=120)
     parser.add_argument("--hide-delay-ms", type=int, default=140)
     parser.add_argument("--post-click-delay-ms", type=int, default=280)
-    parser.add_argument("--icon-size", type=int, default=72)
+    parser.add_argument("--icon-size", type=int, default=64)
     parser.add_argument("--title-max-width", type=int, default=220)
     parser.add_argument("--preview-margin", type=int, default=10)
     parser.add_argument(
