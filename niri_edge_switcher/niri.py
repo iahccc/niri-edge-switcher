@@ -166,6 +166,9 @@ class NiriEventWatcher:
         except NiriCommandError as error:
             self.on_error(str(error))
             return
+        except Exception as error:
+            self.on_error(f"failed to refresh niri snapshot: {error}")
+            return
 
         self.on_snapshot(snapshot)
 

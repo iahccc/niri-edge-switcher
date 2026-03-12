@@ -28,7 +28,7 @@ class WindowState:
     id: int
     title: str
     app_id: str | None
-    workspace_id: int
+    workspace_id: int | None
     is_focused: bool
     is_floating: bool
     is_urgent: bool
@@ -42,7 +42,7 @@ class WindowState:
             id=int(payload["id"]),
             title=payload.get("title") or "",
             app_id=payload.get("app_id"),
-            workspace_id=int(payload["workspace_id"]),
+            workspace_id=_int_or_none(payload.get("workspace_id")),
             is_focused=bool(payload.get("is_focused")),
             is_floating=bool(payload.get("is_floating")),
             is_urgent=bool(payload.get("is_urgent")),
@@ -145,3 +145,9 @@ def _tuple_or_default(value: Any, default: tuple[Any, ...]) -> tuple[Any, ...]:
     if value is None:
         return default
     return tuple(value)
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    return int(value)
