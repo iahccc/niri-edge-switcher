@@ -112,6 +112,7 @@ class EdgePreviewWindow:
         on_click: Callable[[], None],
     ) -> None:
         self.config = config
+        self.side = side
         self.window = Gtk.Window()
         self.window.set_decorated(False)
         self.window.set_resizable(False)
@@ -178,6 +179,7 @@ class EdgePreviewWindow:
             self.icon.set_from_icon_name("application-x-executable")
         self.icon.set_pixel_size(self.config.icon_size)
         self.title.set_text(title or "")
+        self._set_content_alignment(edge_aligned=self._title_overflows(title or ""))
         fallback_height = self.config.icon_size + (self.config.card_padding * 2) + 28
         self._reposition(output, pointer_y, fallback_height=fallback_height)
         self.window.set_visible(True)
@@ -197,6 +199,28 @@ class EdgePreviewWindow:
         max_margin = max(self.config.preview_margin, output.logical.height - fallback_height - self.config.preview_margin)
         margin_top = max(self.config.preview_margin, min(max_margin, margin_top))
         Gtk4LayerShell.set_margin(self.window, Gtk4LayerShell.Edge.TOP, margin_top)
+
+    def _set_content_alignment(self, *, edge_aligned: bool) -> None:
+        if not edge_aligned:
+            self.card.set_halign(Gtk.Align.CENTER)
+            self.icon.set_halign(Gtk.Align.CENTER)
+            self.title.set_halign(Gtk.Align.CENTER)
+            self.title.set_xalign(0.5)
+            return
+
+        side_align = Gtk.Align.START if self.side == "left" else Gtk.Align.END
+        self.card.set_halign(side_align)
+        self.icon.set_halign(side_align)
+        self.title.set_halign(side_align)
+        self.title.set_xalign(0.0 if self.side == "left" else 1.0)
+
+    def _title_overflows(self, title: str) -> bool:
+        if not title:
+            return False
+
+        layout = self.title.create_pango_layout(title)
+        width, _height = layout.get_pixel_size()
+        return width > (self.config.icon_size * 2)
 
 
 class EdgeStripWindow:
