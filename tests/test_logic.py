@@ -20,7 +20,6 @@ def make_window(
     return WindowState(
         id=window_id,
         title=f"window-{window_id}",
-        app_id="test",
         workspace_id=workspace_id,
         is_focused=focused,
         is_floating=False,

@@ -13,9 +13,42 @@
         "aarch64-linux"
       ];
       forAllSystems = lib.genAttrs systems;
+      mkCaptureHelper = pkgs:
+        pkgs.stdenv.mkDerivation {
+          pname = "niri-edge-capture";
+          version = "1";
+          src = "${self}/native";
+
+          strictDeps = true;
+          nativeBuildInputs = [ pkgs.pkg-config pkgs.wayland-scanner ];
+          buildInputs = [ pkgs.pixman pkgs.wayland pkgs.wayland-protocols ];
+
+          buildPhase = ''
+            runHook preBuild
+
+            protocols=$(pkg-config --variable=pkgdatadir wayland-protocols)
+            for protocol in ext-foreign-toplevel-list ext-image-capture-source ext-image-copy-capture; do
+              xml="$protocols/staging/$protocol/$protocol-v1.xml"
+              wayland-scanner client-header "$xml" "$protocol-v1.h"
+              wayland-scanner private-code "$xml" "$protocol-v1.c"
+            done
+
+            $CC -std=c11 -Wall -Wextra -O2 $(pkg-config --cflags wayland-client pixman-1) \
+              -o niri-edge-capture capture.c ./*-v1.c $(pkg-config --libs wayland-client pixman-1)
+
+            runHook postBuild
+          '';
+
+          installPhase = ''
+            runHook preInstall
+            install -Dm755 niri-edge-capture "$out/bin/niri-edge-capture"
+            runHook postInstall
+          '';
+        };
       mkPackage = system:
         let
           pkgs = import nixpkgs { inherit system; };
+          captureHelper = mkCaptureHelper pkgs;
           pythonEnv = pkgs.python3.withPackages (ps: with ps; [
             pygobject3
             pycairo
@@ -77,6 +110,7 @@
 
               makeWrapper ${pythonEnv}/bin/python3 $out/bin/niri-edge-switcher \
                 --add-flags "$out/libexec/niri-edge-switcher/main.py" \
+                --prefix PATH : "${captureHelper}/bin" \
                 --prefix PYTHONPATH : "$out/libexec/niri-edge-switcher" \
                 --set GDK_BACKEND wayland \
                 --set-default GSK_RENDERER gl \
@@ -154,6 +188,7 @@
         in {
           default = pkgs.mkShell {
             packages = [
+              (mkCaptureHelper pkgs)
               pkgs.gobject-introspection
               pkgs.gsettings-desktop-schemas
               pkgs.gtk4-layer-shell

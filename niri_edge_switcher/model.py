@@ -27,7 +27,6 @@ class LayoutState:
 class WindowState:
     id: int
     title: str
-    app_id: str | None
     workspace_id: int | None
     is_focused: bool
     is_floating: bool
@@ -41,7 +40,6 @@ class WindowState:
         return cls(
             id=int(payload["id"]),
             title=payload.get("title") or "",
-            app_id=payload.get("app_id"),
             workspace_id=_int_or_none(payload.get("workspace_id")),
             is_focused=bool(payload.get("is_focused")),
             is_floating=bool(payload.get("is_floating")),

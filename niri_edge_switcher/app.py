@@ -5,6 +5,7 @@ import ctypes
 import logging
 import os
 import re
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,25 +16,29 @@ from .model import OutputState, Snapshot, WindowState
 from .niri import NiriClient, NiriEventWatcher
 
 
-def _import_gtk() -> tuple[Any, Any, Any, Any, Any]:
+def _import_gtk() -> tuple[Any, Any, Any, Any, Any, Any]:
     try:
         ctypes.CDLL("libgtk4-layer-shell.so")
         import gi
 
         gi.require_version("Gtk", "4.0")
         gi.require_version("Gdk", "4.0")
+        gi.require_version("Graphene", "1.0")
         gi.require_version("Pango", "1.0")
         gi.require_version("Gtk4LayerShell", "1.0")
-        from gi.repository import Gdk, Gio, GLib, Gtk, Gtk4LayerShell, Pango
+        from gi.repository import Gdk, GLib, Graphene, Gtk, Gtk4LayerShell, Pango
     except Exception as error:  # pragma: no cover - runtime env only
         raise RuntimeError(
             "GTK4 / PyGObject / gtk4-layer-shell is unavailable. Run this project inside `nix develop`."
         ) from error
 
-    return Gtk, Gdk, Gio, GLib, Gtk4LayerShell, Pango
+    return Gtk, Gdk, GLib, Graphene, Gtk4LayerShell, Pango
 
 
-Gtk, Gdk, Gio, GLib, Gtk4LayerShell, Pango = _import_gtk()
+Gtk, Gdk, GLib, Graphene, Gtk4LayerShell, Pango = _import_gtk()
+
+# Import the GI-dependent capture client after checking the GTK runtime.
+from .capture import WindowCapture
 
 
 @dataclass(frozen=True)
@@ -42,7 +47,6 @@ class AppConfig:
     preview_delay_ms: int = 120
     hide_delay_ms: int = 140
     post_click_delay_ms: int = 280
-    icon_size: int = 64
     title_max_width: int = 220
     preview_margin: int = 10
     card_padding: int = 18
@@ -103,7 +107,6 @@ def _parse_layout_gap_from_kdl(path: Path) -> float | None:
 class EdgePreviewWindow:
     def __init__(
         self,
-        app: Gtk.Application,
         monitor: Gdk.Monitor,
         side: Side,
         config: AppConfig,
@@ -112,15 +115,12 @@ class EdgePreviewWindow:
         on_click: Callable[[], None],
     ) -> None:
         self.config = config
-        self.side = side
         self.window = Gtk.Window()
         self.window.set_decorated(False)
         self.window.set_resizable(False)
         self.window.set_hide_on_close(True)
         self.window.set_focusable(False)
         self.window.add_css_class("edge-preview-window")
-        self.side_padding = max(6, config.card_padding // 2)
-        self.title_max_chars = max(1, config.title_max_width // 10)
 
         Gtk4LayerShell.init_for_window(self.window)
         Gtk4LayerShell.set_namespace(self.window, f"niri-edge-preview-{side}")
@@ -138,23 +138,24 @@ class EdgePreviewWindow:
         self.card.add_css_class("edge-preview-card")
         self.card.set_margin_top(config.card_padding)
         self.card.set_margin_bottom(config.card_padding)
-        self.card.set_margin_start(self.side_padding)
-        self.card.set_margin_end(self.side_padding)
+        side_padding = max(6, config.card_padding // 2)
+        self.card.set_margin_start(side_padding)
+        self.card.set_margin_end(side_padding)
         self.card.set_halign(Gtk.Align.CENTER)
         self.card.set_valign(Gtk.Align.CENTER)
 
-        self.icon = Gtk.Image.new_from_icon_name("application-x-executable")
-        self.icon.add_css_class("edge-preview-icon")
-        self.icon.set_pixel_size(config.icon_size)
-        self.icon.set_halign(Gtk.Align.CENTER)
-        self.card.append(self.icon)
+        self.picture = Gtk.Picture()
+        self.picture.set_content_fit(Gtk.ContentFit.CONTAIN)
+        self.picture.set_can_shrink(True)
+        self.picture.set_can_target(False)
+        self.card.append(self.picture)
 
         self.title = Gtk.Label(label="")
         self.title.add_css_class("edge-preview-title")
         self.title.set_halign(Gtk.Align.CENTER)
         self.title.set_wrap(False)
         self.title.set_single_line_mode(True)
-        self.title.set_max_width_chars(self.title_max_chars)
+        self.title.set_max_width_chars(max(1, config.title_max_width // 10))
         self.title.set_ellipsize(Pango.EllipsizeMode.END)
         self.title.set_xalign(0.5)
         self.title.set_margin_top(8)
@@ -172,61 +173,46 @@ class EdgePreviewWindow:
 
         self.window.set_visible(False)
 
-    def show_icon(self, icon: Gio.Icon | None, title: str, output: OutputState, pointer_y: float) -> None:
-        if icon is not None:
-            self.icon.set_from_gicon(icon)
-        else:
-            self.icon.set_from_icon_name("application-x-executable")
-        self.icon.set_pixel_size(self.config.icon_size)
-        self.title.set_text(title or "")
-        self._set_content_alignment(edge_aligned=self._title_overflows(title or ""))
-        fallback_height = self.config.icon_size + (self.config.card_padding * 2) + 28
-        self._reposition(output, pointer_y, fallback_height=fallback_height)
+    def set_title(self, title: str) -> None:
+        self.title.set_text(title)
+
+    def show_frame(self, width: int, height: int, pixels: bytes, output: OutputState, pointer_y: float) -> None:
+        texture = Gdk.MemoryTexture.new(
+            width, height, Gdk.MemoryFormat.B8G8R8A8_PREMULTIPLIED, GLib.Bytes.new(pixels), width * 4
+        )
+        scale = output.logical.scale
+        logical_width = max(1, round(width / scale))
+        logical_height = max(1, round(height / scale))
+        snapshot = Gtk.Snapshot.new()
+        snapshot.append_texture(texture, Graphene.Rect().init(0, 0, logical_width, logical_height))
+
+        previous = self.picture.get_paintable()
+        self.picture.set_paintable(snapshot.to_paintable(None))
+        if previous is None or (
+            previous.get_intrinsic_width(), previous.get_intrinsic_height()
+        ) != (logical_width, logical_height):
+            self.reposition(output, pointer_y)
         self.window.set_visible(True)
 
     def hide(self) -> None:
         self.window.set_visible(False)
+        self.picture.set_paintable(None)
 
     def is_visible(self) -> bool:
         return self.window.get_visible()
 
     def reposition(self, output: OutputState, pointer_y: float) -> None:
-        fallback_height = self.config.icon_size + (self.config.card_padding * 2) + 28
-        self._reposition(output, pointer_y, fallback_height=fallback_height)
-
-    def _reposition(self, output: OutputState, pointer_y: float, fallback_height: int) -> None:
-        margin_top = int(pointer_y - (fallback_height / 2))
-        max_margin = max(self.config.preview_margin, output.logical.height - fallback_height - self.config.preview_margin)
-        margin_top = max(self.config.preview_margin, min(max_margin, margin_top))
+        _, height, _, _ = self.card.measure(Gtk.Orientation.VERTICAL, -1)
+        margin = self.config.preview_margin
+        margin_top = int(pointer_y - height / 2)
+        max_margin = max(margin, output.logical.height - height - margin)
+        margin_top = max(margin, min(max_margin, margin_top))
         Gtk4LayerShell.set_margin(self.window, Gtk4LayerShell.Edge.TOP, margin_top)
-
-    def _set_content_alignment(self, *, edge_aligned: bool) -> None:
-        if not edge_aligned:
-            self.card.set_halign(Gtk.Align.CENTER)
-            self.icon.set_halign(Gtk.Align.CENTER)
-            self.title.set_halign(Gtk.Align.CENTER)
-            self.title.set_xalign(0.5)
-            return
-
-        side_align = Gtk.Align.START if self.side == "left" else Gtk.Align.END
-        self.card.set_halign(side_align)
-        self.icon.set_halign(side_align)
-        self.title.set_halign(side_align)
-        self.title.set_xalign(0.0 if self.side == "left" else 1.0)
-
-    def _title_overflows(self, title: str) -> bool:
-        if not title:
-            return False
-
-        layout = self.title.create_pango_layout(title)
-        width, _height = layout.get_pixel_size()
-        return width > (self.config.icon_size * 2)
 
 
 class EdgeStripWindow:
     def __init__(
         self,
-        app: Gtk.Application,
         monitor: Gdk.Monitor,
         output: OutputState,
         side: Side,
@@ -317,9 +303,9 @@ class SideController:
         self.preview_hover = False
         self.show_timer_id: int | None = None
         self.hide_timer_id: int | None = None
+        self.capture: WindowCapture | None = None
 
         self.preview = EdgePreviewWindow(
-            app=app,
             monitor=monitor,
             side=side,
             config=app.config,
@@ -328,7 +314,6 @@ class SideController:
             on_click=self.activate_target,
         )
         self.strip = EdgeStripWindow(
-            app=app,
             monitor=monitor,
             output=output,
             side=side,
@@ -342,7 +327,7 @@ class SideController:
     def destroy(self) -> None:
         self._cancel_show()
         self._cancel_hide()
-        self.preview.hide()
+        self._hide_preview()
         self.preview.window.destroy()
         self.strip.destroy()
 
@@ -351,20 +336,26 @@ class SideController:
         self.strip.update_output(output)
 
     def update_target(self, target: WindowState | None) -> None:
-        previous_id = self.target.id if self.target is not None else None
-        current_id = target.id if target is not None else None
+        previous = self.target
         self.target = target
         if target is None:
             self.strip_hover = False
-            self.preview_hover = False
-            self.preview.hide()
+            self._hide_preview()
             self.strip.hide()
             self._cancel_show()
             self._cancel_hide()
             return
         self.strip.show()
-        if self.preview.is_visible() and previous_id != current_id:
-            self.schedule_show(delay_ms=0)
+        if self.capture is None:
+            return
+        if previous is None or previous.id != target.id or self.capture.scale != self.output.logical.scale:
+            self._hide_preview()
+            if self.strip_hover:
+                self._start_capture(target)
+        elif previous.title != target.title:
+            self.preview.set_title(target.title)
+            if self.preview.is_visible():
+                self.preview.reposition(self.output, self.pointer_y)
 
     def on_strip_enter(self, y: float) -> None:
         self.strip_hover = True
@@ -381,7 +372,10 @@ class SideController:
     def on_strip_leave(self) -> None:
         self.strip_hover = False
         self._cancel_show()
-        self._schedule_hide()
+        if self.preview.is_visible():
+            self._schedule_hide()
+        else:
+            self._hide_preview()
 
     def on_preview_enter(self) -> None:
         self.preview_hover = True
@@ -392,7 +386,7 @@ class SideController:
         self._schedule_hide()
 
     def schedule_show(self, delay_ms: int | None = None) -> None:
-        if self.target is None:
+        if self.target is None or self.capture is not None:
             return
         self._cancel_show()
         delay = self.app.config.preview_delay_ms if delay_ms is None else delay_ms
@@ -402,8 +396,7 @@ class SideController:
         if self.target is None:
             return
         self.app.logger.debug("activate target: window=%s", self.target.id)
-        self.preview_hover = False
-        self.preview.hide()
+        self._hide_preview()
         self._cancel_show()
         self._cancel_hide()
         self.app.focus_window(self.target.id)
@@ -412,11 +405,38 @@ class SideController:
 
     def _show_preview(self) -> bool:
         self.show_timer_id = None
-        if self.target is None or not (self.strip_hover or self.preview_hover):
-            return False
-        icon = self.app.resolve_window_icon(self.target)
-        self.preview.show_icon(icon, self.target.title, self.output, self.pointer_y)
+        if self.target is not None and self.strip_hover and self.capture is None:
+            self._start_capture(self.target)
         return False
+
+    def _start_capture(self, target: WindowState) -> None:
+        if self.app.capture_helper is None:
+            return
+        self.preview.set_title(target.title)
+        try:
+            self.capture = WindowCapture(
+                self.app.capture_helper,
+                target.id,
+                self._on_preview_frame,
+                self._on_capture_failure,
+                scale=self.output.logical.scale,
+            )
+        except GLib.Error as error:
+            self._on_capture_failure(error.message)
+
+    def _on_preview_frame(self, width: int, height: int, pixels: bytes) -> None:
+        self.preview.show_frame(width, height, pixels, self.output, self.pointer_y)
+
+    def _on_capture_failure(self, error: str) -> None:
+        self.app.logger.debug("preview capture: %s", error)
+        self._hide_preview()
+
+    def _hide_preview(self) -> None:
+        if self.capture is not None:
+            self.capture.stop()
+            self.capture = None
+        self.preview_hover = False
+        self.preview.hide()
 
     def _schedule_hide(self) -> None:
         self._cancel_hide()
@@ -425,7 +445,7 @@ class SideController:
     def _hide_if_unhovered(self) -> bool:
         self.hide_timer_id = None
         if not self.strip_hover and not self.preview_hover:
-            self.preview.hide()
+            self._hide_preview()
         return False
 
     def _cancel_show(self) -> None:
@@ -460,6 +480,7 @@ class EdgePreviewApplication(Gtk.Application):
         super().__init__(application_id="dev.codex.niri-edge-switcher")
         self.config = config
         self.logger = logging.getLogger("niri-edge-switcher")
+        self.capture_helper = shutil.which("niri-edge-capture")
         self.client = NiriClient(self.logger)
         self.inter_column_spacing = (
             config.inter_column_spacing if config.inter_column_spacing is not None else _load_inter_column_spacing()
@@ -553,53 +574,6 @@ class EdgePreviewApplication(Gtk.Application):
         except Exception as error:  # pragma: no cover - runtime integration only
             self.report_error(str(error))
 
-    def resolve_window_icon(self, window: WindowState) -> Gio.Icon:
-        app_id = (window.app_id or "").strip()
-        if app_id:
-            desktop_ids = [app_id] if app_id.endswith(".desktop") else [f"{app_id}.desktop", app_id]
-            for desktop_id in desktop_ids:
-                try:
-                    app_info = Gio.DesktopAppInfo.new(desktop_id)
-                except TypeError:
-                    continue
-                if app_info is None:
-                    continue
-                icon = app_info.get_icon()
-                if icon is not None:
-                    return icon
-
-        display = Gdk.Display.get_default()
-        theme = Gtk.IconTheme.get_for_display(display) if display is not None else None
-        seen: set[str] = set()
-        for candidate in self._icon_name_candidates(app_id):
-            if not candidate or candidate in seen:
-                continue
-            seen.add(candidate)
-            if theme is None or theme.has_icon(candidate):
-                return Gio.ThemedIcon.new(candidate)
-        return Gio.ThemedIcon.new("application-x-executable")
-
-    def _icon_name_candidates(self, app_id: str) -> list[str]:
-        if not app_id:
-            return ["application-x-executable", "application-default-icon"]
-
-        base = app_id[:-8] if app_id.endswith(".desktop") else app_id
-        tail = base.rsplit(".", 1)[-1]
-        candidates = [
-            app_id,
-            base,
-            base.lower(),
-            tail,
-            tail.lower(),
-            base.replace(".", "-"),
-            base.replace(".", "-").lower(),
-            base.replace(".", "_"),
-            base.replace(".", "_").lower(),
-            "application-x-executable",
-            "application-default-icon",
-        ]
-        return [candidate for candidate in candidates if candidate]
-
     def report_error(self, error: str) -> bool:
         if self._shutting_down:
             return False
@@ -684,10 +658,6 @@ class EdgePreviewApplication(Gtk.Application):
               box-shadow: none;
             }
 
-            .edge-preview-icon {
-              color: #f5f7ff;
-            }
-
             .edge-preview-title {
               color: #f5f7ff;
             }
@@ -708,7 +678,6 @@ def parse_args(argv: list[str]) -> AppConfig:
     parser.add_argument("--preview-delay-ms", type=int, default=120)
     parser.add_argument("--hide-delay-ms", type=int, default=140)
     parser.add_argument("--post-click-delay-ms", type=int, default=280)
-    parser.add_argument("--icon-size", type=int, default=64)
     parser.add_argument("--title-max-width", type=int, default=220)
     parser.add_argument("--preview-margin", type=int, default=10)
     parser.add_argument(
@@ -724,7 +693,6 @@ def parse_args(argv: list[str]) -> AppConfig:
         preview_delay_ms=args.preview_delay_ms,
         hide_delay_ms=args.hide_delay_ms,
         post_click_delay_ms=args.post_click_delay_ms,
-        icon_size=args.icon_size,
         title_max_width=args.title_max_width,
         preview_margin=args.preview_margin,
         inter_column_spacing=args.inter_column_spacing,
